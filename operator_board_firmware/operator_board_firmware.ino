@@ -53,6 +53,7 @@ public:
     }
   }
 };
+
 class OtherStuff{
   public:
     unsigned long last_pressed_time;
@@ -62,7 +63,7 @@ class OtherStuff{
       state = false;
           }
       void UpdateState(int value, unsigned long current_time){
-          if ((current_time - last_pressed_time) < pressed_deadband){
+          if ((current_time - last_pressed_time) < pressed_deadband pressed_deadband && value == state){
             return 0;
           }
           bool curr_pressed = value > pressed_deadband;
@@ -72,6 +73,19 @@ class OtherStuff{
           state = curr_pressed;
 
       }
+      void UpdateStateForDigitalButtonsCzTheirSpecialAndGoFrom1To0InsteadOf0To1(int value, unsigned long current_time){
+        if ((current_time - last_pressed_time) < pressed_deadband && value == state){
+            return 0;
+          }
+          bool curr_pressed = value;
+          if (state && !curr_pressed){
+            last_pressed_time = current_time;
+          }
+          state = curr_pressed;
+      }
+      unsigned long getLastPressed(){
+        return last_pressed_time;
+      }
     
 };
 // Create an array of Button objects for each coral position
@@ -79,6 +93,7 @@ Button buttons[12];
 OtherStuff otherbuttons[6];
 OtherStuff otherswitches[6];
 OtherStuff otherotherbuttons[4];
+unsigned long lastDetected;
 void setup() {
   Serial.begin(9600);
   pinMode(signal_pin, INPUT);
@@ -111,7 +126,7 @@ void loop() {
   for (byte i = 0; i < 6; i++){
     mux2.channel(i);
     int val = analogRead(signal_pin2);
-
+   
     otherbuttons[i].UpdateState(val,current_time);
     Joystick.setButton(buttonMapping[12+i],otherbuttons[i].state);
   }
@@ -126,9 +141,8 @@ void loop() {
   }
   for(byte i = 6; i < 10; i++){
     int val = digitalRead(i);
-  
-    otherotherbuttons[i].UpdateState(val,current_time);
+    otherotherbuttons[i].UpdateStateForDigitalButtonsCzTheirSpecialAndGoFrom1To0InsteadOf0To1(val,current_time);
     Joystick.setButton(buttonMapping[23+i],otherbuttons[i].state);
   }
-  Serial.println(digitalRead(7));
+
 }
