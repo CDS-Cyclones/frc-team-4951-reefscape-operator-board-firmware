@@ -2,6 +2,7 @@
 #include <Joystick.h>
 
 CD74HC4067 mux(2, 3, 4, 5);
+//6,7,8,9
 CD74HC4067 mux2(15,14,16,10);
 Joystick_ Joystick(JOYSTICK_DEFAULT_REPORT_ID, JOYSTICK_TYPE_GAMEPAD, 12, 0, false, false, false, false, false, false, false, false, false, false);
 
@@ -12,7 +13,7 @@ const unsigned long pressed_cooldown = 300;  // Cooldown in milliseconds
 const unsigned long debounce = 20;           // Debounce in milliseconds
 
 // Map button presses to standard joystick buttons (1-12)
-const int buttonMapping[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
+const int buttonMapping[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ,12, 13, 14,15,16,17,18,19,20,21,22,23,24,25,26,27};
 
 // Categorizing buttons
 const int toggleButtons[] = { 0, 1, 2, 3, 4, 5 };       // Toggle buttons
@@ -77,6 +78,7 @@ class OtherStuff{
 Button buttons[12];
 OtherStuff otherbuttons[6];
 OtherStuff otherswitches[6];
+otherStuff otherotherbuttons[4];
 void setup() {
   Serial.begin(9600);
   pinMode(signal_pin, INPUT);
@@ -105,16 +107,22 @@ void loop() {
   for (byte i = 0; i < 6; i++){
     mux2.channel(i);
     int val = analogRead(signal_pin2);
+
     otherbuttons[i].UpdateState(val,current_time);
+    Joystick.setButton(buttonMapping[12+i],otherbuttons[i].state)
   }
-  for (byte i = 7; i < 16; i++){
+  for (byte i = 7; i < 13; i++){
     mux2.channel(i);
     int val = analogRead(signal_pin2);
     otherswitches[i].UpdateState(val,current_time);
-    if (val > 800){
-      Serial.println(i);
-    }
+     Joystick.setButton(buttonMapping[18+i],otherbuttons[i].state)
     
+  }
+  for(byte i = 6; i < 10; i++){
+    int val = digitalRead(i);
+    otherotherbuttons[i].UpdateState(val,current_time);
+    Serial.println(val);
+    Joystick.setButton(buttonMapping[23+i],otherbuttons[i].state)
   }
   
 }
