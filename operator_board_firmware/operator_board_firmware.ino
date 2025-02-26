@@ -78,10 +78,14 @@ class OtherStuff{
 Button buttons[12];
 OtherStuff otherbuttons[6];
 OtherStuff otherswitches[6];
-otherStuff otherotherbuttons[4];
+OtherStuff otherotherbuttons[4];
 void setup() {
   Serial.begin(9600);
   pinMode(signal_pin, INPUT);
+  pinMode(6,INPUT);
+  pinMode(7,INPUT);
+  pinMode(8,INPUT);
+  pinMode(9,INPUT);
   Joystick.begin();
 
   // loop that determines whether or not a button is a toggle button or momentary button
@@ -109,20 +113,22 @@ void loop() {
     int val = analogRead(signal_pin2);
 
     otherbuttons[i].UpdateState(val,current_time);
-    Joystick.setButton(buttonMapping[12+i],otherbuttons[i].state)
+    Joystick.setButton(buttonMapping[12+i],otherbuttons[i].state);
   }
   for (byte i = 7; i < 13; i++){
     mux2.channel(i);
     int val = analogRead(signal_pin2);
     otherswitches[i].UpdateState(val,current_time);
-     Joystick.setButton(buttonMapping[18+i],otherbuttons[i].state)
+    Joystick.setButton(buttonMapping[18+i],otherbuttons[i].state);
+   
+
     
   }
   for(byte i = 6; i < 10; i++){
     int val = digitalRead(i);
-    otherotherbuttons[i].UpdateState(val,current_time);
-    Serial.println(val);
-    Joystick.setButton(buttonMapping[23+i],otherbuttons[i].state)
-  }
   
+    otherotherbuttons[i].UpdateState(val,current_time);
+    Joystick.setButton(buttonMapping[23+i],otherbuttons[i].state);
+  }
+  Serial.println(digitalRead(7));
 }
