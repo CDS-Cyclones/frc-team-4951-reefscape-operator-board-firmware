@@ -8,12 +8,12 @@ Joystick_ Joystick(JOYSTICK_DEFAULT_REPORT_ID, JOYSTICK_TYPE_GAMEPAD, 12, 0, fal
 
 const int signal_pin = A0;
 const int signal_pin2 = A1;
-const int pressed_deadband = 870;            // Threshold for button press
+const int pressed_deadband = 800;            // Threshold for button press
 const unsigned long pressed_cooldown = 300;  // Cooldown in milliseconds
 const unsigned long debounce = 20;           // Debounce in milliseconds
 
 // Map button presses to standard joystick buttons (1-12)
-const int buttonMapping[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ,12, 13, 14,15,16,17,18,19,20,21,22,23,24,25,26,27};
+const int buttonMapping[] = { 0, 2, 1, 3, 4, 5, 11, 10, 7, 6, 9, 8 ,13, 12, 16,17,15,14,18,19,22,20,23,24,21,25,26,27};
 
 // Categorizing buttons
 const int toggleButtons[] = { 0, 1, 2, 3, 4, 5 };       // Toggle buttons
@@ -58,31 +58,29 @@ class OtherStuff{
   public:
     unsigned long last_pressed_time;
     bool state;
+    bool last_value;
     OtherStuff(){
       last_pressed_time = 0;
       state = false;
           }
       void UpdateState(int value, unsigned long current_time){
-          if ((current_time - last_pressed_time) < pressed_deadband pressed_deadband && value == state){
+        if (value < pressed_deadband){
+          state = 0;
+        }
+        if ((current_time - last_pressed_time) < pressed_deadband){
             return 0;
           }
-          bool curr_pressed = value > pressed_deadband;
+          bool curr_pressed = value >= pressed_deadband;
           if (!state && curr_pressed){
             last_pressed_time = current_time;
           }
           state = curr_pressed;
+    }
+  
 
-      }
-      void UpdateStateForDigitalButtonsCzTheirSpecialAndGoFrom1To0InsteadOf0To1(int value, unsigned long current_time){
-        if ((current_time - last_pressed_time) < pressed_deadband && value == state){
-            return 0;
-          }
-          bool curr_pressed = value;
-          if (state && !curr_pressed){
-            last_pressed_time = current_time;
-          }
-          state = curr_pressed;
-      }
+
+      
+      
       unsigned long getLastPressed(){
         return last_pressed_time;
       }
@@ -122,26 +120,30 @@ void loop() {
       bool button_state = val > pressed_deadband;
       Joystick.setButton(buttonMapping[i], button_state);
     }
+    
   }
   for (byte i = 0; i < 6; i++){
     mux2.channel(i);
     int val = analogRead(signal_pin2);
-   
     otherbuttons[i].UpdateState(val,current_time);
     Joystick.setButton(buttonMapping[12+i],otherbuttons[i].state);
+    
+     
   }
   for (byte i = 7; i < 13; i++){
     mux2.channel(i);
     int val = analogRead(signal_pin2);
-    otherswitches[i].UpdateState(val,current_time);
-    Joystick.setButton(buttonMapping[18+i],otherbuttons[i].state);
+    otherswitches[i-7].UpdateState(val,current_time);
+    Joystick.setButton(buttonMapping[12+i],otherswitches[i-7].state);
+    }
+    
    
 
     
-  }
+  
   for(byte i = 6; i < 10; i++){
     int val = digitalRead(i);
-    otherotherbuttons[i].UpdateStateForDigitalButtonsCzTheirSpecialAndGoFrom1To0InsteadOf0To1(val,current_time);
+    otherotherbuttons[i].UpdateState(val,current_time);
     Joystick.setButton(buttonMapping[23+i],otherbuttons[i].state);
   }
 
