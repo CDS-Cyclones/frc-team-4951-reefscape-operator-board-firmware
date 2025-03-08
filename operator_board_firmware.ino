@@ -1,174 +1,227 @@
 #include <light_CD74HC4067.h>
 #include <Joystick.h>
 
-CD74HC4067 mux(2, 3, 4, 5);
-CD74HC4067 mux2(15, 14, 16, 10);
+const int ANALOG_PRESSED_DEADBAND = 900;
+const unsigned long INSTANTANEOUS_BUTTON_POSTPRESS_COOLDOWN = 200;
 
-// Map pin id's to position around coral
-int channelToButton[] = {7, 5, 6, 4, 3, 2, 8, 9, 0, 1, 10, 11, 1, 0, 5, 4, 2, 3};
-// int yellowChannelToButton = {1, 0, 5, 4, 2, 3};
-
-const int signal_pin = A0;                    // Pin Connected to Sig pin of CD74HC4067
-const int pressed_deadband = 870;             // Min analogue reading indicating button is pressed
-const unsigned long pressed_cooldown = 300;   // Cooldown in milliseconds
-const unsigned long debounce = 20;
-
-byte april_tag_position = -1;  // Variable to store the letter of the pressed button
-
-// Arrays to store button numbers for different types of buttons
-const int toggleButtons[] = {0, 1, 2, 3, 4, 5};       // Buttons that stay in when pressed
-const int momentaryButtons[] = {8, 9, 10, 11, 6, 7};  // Buttons that do not stay in when pressed
-
-class CoralButton {
- public:
-  unsigned long last_pressed_time;
-  bool state;
-  bool is_toggle;
-  bool last_value;
-
-  CoralButton() {
-    last_pressed_time = -1;
-    state = false;
-    is_toggle = false;
-    last_value = false;
-  }
-
-  // Returns true if pose should be updated
-  bool shouldUpdatePose(int value, unsigned long current_time) {
-    bool curr_pressed = value > pressed_deadband;
-    if (is_toggle) {  // Update state for toggle buttons
-      if (curr_pressed != last_value) {
-        last_value = curr_pressed;
-        return true;
-      }
-      return false;
-    } else {  // Update state for momentary buttons
-      if (curr_pressed && !last_value && (current_time - last_pressed_time > pressed_cooldown)) {
-        last_pressed_time = current_time;  // Record time when pressed
-        last_value = curr_pressed;
-        return true;
-      }
-      last_value = curr_pressed;
-      return false;
-    }
-  }
+enum ActuatorCategory {
+  CORAL_POSE,
+  YELLOW_HOLD,
+  WHITE_ELEVATOR_LEVEL,
+  RED_TOGGLE,
+  SWITCH
 };
 
-// Elevator class to handle elevator levels
-class Elevator {
- public:
-  int levels[4];
-  
-  Elevator(int pin1, int pin2, int pin3, int pin4) {
-    levels[0] = pin1;
-    levels[1] = pin2;
-    levels[2] = pin3;
-    levels[3] = pin4;
-  }
-  
-  void checkLevels() {
-    for (int i = 0; i < 4; i++) {
-      if (digitalRead(levels[i]) == HIGH) {
-        Serial.println("Elevator level: " + String(i));
-        delay(debounce);  // debounce delay
-        resetLevels();
-        break;
-      }
-    }
-  }
+enum ActuatorType {
+  TOGGLE_BUTTON,         // A button that toggles between states when pressed; considered "on" for one loop iteration
+  INSTANTANEOUS_BUTTON,  // A button that returns to "off" state immediately after release; requires a cooldown period to prevent repeated triggers
+  HOLD_BUTTON,           // A button that should be considered "on" for multiple loop iterations as long as it reading is high
+  SWITCH_ACTUATOR         // A switch with distinct "on" and "off" positions; remains "on" as long as the reading is high
+};
 
- private:
-  void resetLevels() {
-    for (int i = 0; i < 4; i++) {
-      if (digitalRead(levels[i]) == HIGH) {
-        // Wait for button to be released
-        while (digitalRead(levels[i]) == HIGH) {
-          delay(10);
+enum ActuatorLocation {
+    MUX_A,
+    MUX_B,
+    DIG
+};
+
+class Actuator {
+  public:
+    Actuator(ActuatorCategory category, ActuatorType type, ActuatorLocation location, uint8_t pin, uint8_t joystickId)
+      : category(category), type(type), location(location), pin(pin), joystickId(joystickId), lastPressedTime(0), lastState(false), valueToReport(false) {}
+
+    ActuatorLocation getLocation() const {
+      return location;
+    }
+
+    ActuatorCategory getCategory() const {
+      return category; 
+    }
+
+    uint8_t getPin() const {
+      return pin;
+    }
+
+    uint8_t getJoystickId() const {
+      return joystickId;
+    }
+
+    bool getReportedValue() {
+      return valueToReport;
+    }
+
+    void update(int value, unsigned long currentTime) {
+      bool currentState;
+
+      valueToReport = false;
+      
+      // Standardize any value to true/false boolean
+      switch(location) {
+        case MUX_A:
+        case MUX_B:
+          currentState = value > ANALOG_PRESSED_DEADBAND;
+          break;
+        case DIG:
+          currentState = (value == HIGH);
+          break;
+      }
+  
+      // Interpret the value based on actuator type
+      switch(type) {
+        case TOGGLE_BUTTON: {
+          if (currentState != lastState && ((currentTime - lastPressedTime) > INSTANTANEOUS_BUTTON_POSTPRESS_COOLDOWN || lastPressedTime == 0)) {
+            lastPressedTime = currentTime;
+            valueToReport = !valueToReport;
+          }
+          break;
+        }
+        case INSTANTANEOUS_BUTTON: {
+          if (currentState && !lastState && ((currentTime - lastPressedTime) > INSTANTANEOUS_BUTTON_POSTPRESS_COOLDOWN || lastPressedTime == 0)) {
+            lastPressedTime = currentTime;
+            valueToReport = true;
+          }
+          break;
+        }
+        case HOLD_BUTTON:
+        case SWITCH_ACTUATOR: {
+          if (currentState) {
+            lastPressedTime = currentTime;
+            valueToReport = true;
+          }
+          break;
         }
       }
+
+      lastState = currentState;
     }
-  }
+
+  private:
+    const ActuatorCategory category;
+    const ActuatorType type;
+    const ActuatorLocation location;
+    const uint8_t pin;
+    const uint8_t joystickId;
+
+    unsigned long lastPressedTime;
+    bool lastState;
+    bool valueToReport;
 };
 
-// Create an array of Button objects for each coral position
-CoralButton coral_buttons[12];
+class Multiplexer {
+  public:
+    Multiplexer(uint8_t s0, uint8_t s1, uint8_t s2, uint8_t s3, uint8_t sigPin)
+      : multiplexer(s0, s1, s2, s3), signalPin(sigPin) {}
 
-// Create an elevator object with buttons on pins 6, 7, 8, 9
-Elevator elevator(6, 7, 8, 9);
+    void setChannel(uint8_t channel) {
+      multiplexer.channel(channel);
+    }
 
-// Create joystick
+    int readAnalog() {
+      return analogRead(signalPin);
+    }
+
+    int readAnalog(uint8_t channel) {
+      setChannel(channel);
+      return analogRead(signalPin);
+    }
+
+    uint8_t getSignalPin() {
+      return signalPin;
+    }
+
+  private:
+    CD74HC4067 multiplexer;
+    uint8_t signalPin;
+};
+
+Multiplexer muxA(10, 16, 14, 15, A0);
+Multiplexer muxB(9, 8, 7, 6, A3);
+
 Joystick_ joystick;
+
+Actuator actuators[] = {
+  Actuator(CORAL_POSE, TOGGLE_BUTTON, MUX_A, 0, 0),
+  Actuator(CORAL_POSE, TOGGLE_BUTTON, MUX_A, 1, 2),
+  Actuator(CORAL_POSE, TOGGLE_BUTTON, MUX_A, 2, 1),
+  Actuator(CORAL_POSE, TOGGLE_BUTTON, MUX_A, 3, 3),
+  Actuator(CORAL_POSE, TOGGLE_BUTTON, MUX_A, 4, 4),
+  Actuator(CORAL_POSE, TOGGLE_BUTTON, MUX_A, 5, 5),
+  Actuator(CORAL_POSE, INSTANTANEOUS_BUTTON, MUX_A, 6, 11),
+  Actuator(CORAL_POSE, INSTANTANEOUS_BUTTON, MUX_A, 7, 10),
+  Actuator(CORAL_POSE, INSTANTANEOUS_BUTTON, MUX_A, 8, 7),
+  Actuator(CORAL_POSE, INSTANTANEOUS_BUTTON, MUX_A, 9, 6),
+  Actuator(CORAL_POSE, INSTANTANEOUS_BUTTON, MUX_A, 10, 9),
+  Actuator(CORAL_POSE, INSTANTANEOUS_BUTTON, MUX_A, 11, 8),
+  Actuator(WHITE_ELEVATOR_LEVEL, INSTANTANEOUS_BUTTON, MUX_A, 12, 19),
+  Actuator(WHITE_ELEVATOR_LEVEL, INSTANTANEOUS_BUTTON, MUX_A, 13, 20),
+  Actuator(WHITE_ELEVATOR_LEVEL, INSTANTANEOUS_BUTTON, MUX_A, 14, 18),
+  Actuator(WHITE_ELEVATOR_LEVEL, INSTANTANEOUS_BUTTON, MUX_A, 15, 21),
+  Actuator(YELLOW_HOLD, HOLD_BUTTON, MUX_B, 0, 13),
+  Actuator(YELLOW_HOLD, HOLD_BUTTON, MUX_B, 1, 12),
+  Actuator(YELLOW_HOLD, HOLD_BUTTON, MUX_B, 2, 16),
+  Actuator(YELLOW_HOLD, HOLD_BUTTON, MUX_B, 3, 17),
+  Actuator(YELLOW_HOLD, HOLD_BUTTON, MUX_B, 4, 15),
+  Actuator(YELLOW_HOLD, HOLD_BUTTON, MUX_B, 5, 14),
+  Actuator(SWITCH, SWITCH_ACTUATOR, MUX_B, 7, 22),
+  Actuator(SWITCH, SWITCH_ACTUATOR, MUX_B, 8, 25),
+  Actuator(SWITCH, SWITCH_ACTUATOR, MUX_B, 9, 23),
+  Actuator(SWITCH, SWITCH_ACTUATOR, MUX_B, 10, 26),
+  Actuator(SWITCH, SWITCH_ACTUATOR, MUX_B, 11, 27),
+  Actuator(SWITCH, SWITCH_ACTUATOR, MUX_B, 12, 24),
+  Actuator(RED_TOGGLE, HOLD_BUTTON, MUX_B, 14, 28),
+  Actuator(RED_TOGGLE, HOLD_BUTTON, MUX_B, 15, 29),
+};
 
 void setup() {
   Serial.begin(9600);
-  pinMode(signal_pin, INPUT);  // Set as input for reading through signal pin
 
-  // Record whether each button is a toggle or momentary button
-  for (byte i = 0; i < 12; i++) {
-    for (int j = 0; j < sizeof(toggleButtons) / sizeof(toggleButtons[0]); j++) {
-      if (toggleButtons[j] == i) {
-        coral_buttons[i].is_toggle = true;
-        break;
-      }
+  // Set multiplexer signal pins as input
+  pinMode(muxA.getSignalPin(), INPUT);
+  pinMode(muxB.getSignalPin(), INPUT);
+
+  for (int i = 0; i < sizeof(actuators) / sizeof(actuators[0]); ++i) {
+    Actuator& actuator = actuators[i];  // Reference to the existing Actuator object
+
+    // Actuators plugged directly into Arduino need their pin to be set to input
+    if (actuator.getLocation() == DIG) {
+      pinMode(actuator.getPin(), INPUT);
     }
   }
-  
-  // Set elevator level pins as input
-  for (int i = 6; i < 10; i++) {
-    pinMode(i, INPUT);
-  }
-  
-  // Initialize Joystick Library
-	joystick.begin();
+
+  joystick.begin();
 }
 
 void loop() {
-  // Loop through all coral buttons mux[0, 11]
-  for (byte i=0; i < 12; i++) {
-    mux.channel(i);
-    int val = analogRead(signal_pin);
-    unsigned long current_time = millis();
+  unsigned long currentTime = millis();  // Get the current time once to use in the loop
 
-    if (coral_buttons[i].shouldUpdatePose(val, current_time)) {
-      april_tag_position = channelToButton[i];  // Update the AprilTagPosition with the corresponding button number
-      Serial.println(april_tag_position);
+  for (int i = 0; i < sizeof(actuators) / sizeof(actuators[0]); ++i) {
+    Actuator& actuator = actuators[i];  // Reference to the existing Actuator object
+
+    // Some actuator categories should get "reset" on every iteration
+    if (actuator.getCategory() == CORAL_POSE || actuator.getCategory() == WHITE_ELEVATOR_LEVEL) {
+      joystick.setButton(actuator.getJoystickId(), LOW);
+    }
+
+    int value;
+    switch (actuator.getLocation()) {
+      case MUX_A:
+        value = muxA.readAnalog(actuator.getPin());
+        break;
+      case MUX_B:
+        value = muxB.readAnalog(actuator.getPin());
+        break;
+      case DIG:
+        value = digitalRead(actuator.getPin());
+        break;
+    }
+    actuator.update(value, currentTime);
+
+    if (actuator.getReportedValue()) {
+      joystick.setButton(actuator.getJoystickId(), HIGH);
+    } else {
+      joystick.setButton(actuator.getJoystickId(), LOW);
     }
   }
-  
-  // Set joystick values for coral position
-  for(byte but = 0; but < 12; but++) {
-    joystick.setButton(0, LOW);
-  }
-  if(april_tag_position != -1) {
-    joystick.setButton(april_tag_position, HIGH);
-  }
 
-  // for(byte i=12; i<14; i++) {
-  //   Serial.print(String(val) + "---");
-  // }
-
-  // The six yellow buttons
-  // for(byte i=0; i<7; i++) {
-  //   mux2.channel(i);
-  //   int val = analogRead(A0);
-  // }
-
-  // // The six swithces
-  // for(byte i=7; i<13; i++) {
-  //   mux2.channel(i);
-  //   int val = analogRead(A1);
-  //   Serial.print(String(val) + "---");
-  // }
-
-
-  // for (int i = 6; i < 10; i++) {
-  //   if (digitalRead(i) == LOW) {
-  //     Serial.println("Elevator level: " + String(i));
-  //   }
-  // }
-
-  //Serial.println(digitalRead(6));
-  
-  // Reset
-  april_tag_position = -1;
+  delay(20);  // DriverStation needs time to register the press
 }
