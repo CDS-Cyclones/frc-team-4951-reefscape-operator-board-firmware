@@ -8,7 +8,7 @@ This custom controller features 24 buttons and 6 switches powered by a Micro Pro
 ---
 
 ## Layout and Button IDs
-[*This image shows layout along with each actuator's ID.*](https://ibb.co/sJt3zhtx)  
+![This image shows layout along with each actuator's ID.](https://i.ibb.co/PztC0RtX/operatorboardlayout.png)  
 *Note: In WPILIB HID, button indexes are offset by one. For example, index 0 becomes 1, index 2 becomes 3, and so on.*
 
 ---
